@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detector de Manos y Música</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        h1 {
+            color: #333;
+        }
+        #videoContainer {
+            position: relative;
+            margin-bottom: 20px;
+        }
+        #output, #noteOutput {
+            position: absolute;
+            background-color: rgba(255, 255, 255, 0.7);
+            padding: 5px;
+            border-radius: 5px;
+        }
+        #output {
+            top: 10px;
+            left: 10px;
+        }
+        #noteOutput {
+            top: 10px;
+            right: 10px;
+        }
+        #status {
+            margin-top: 20px;
+            font-weight: bold;
+        }
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Detector de Manos y Música</h1>
+    <div id="videoContainer">
+        <video id="video" width="640" height="480" autoplay></video>
+        <canvas id="canvas" width="640" height="480"></canvas>
+        <div id="output"></div>
+        <div id="noteOutput"></div>
+    </div>
+    <div id="status">Cargando modelo...</div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const output = document.getElementById('output');
+        const noteOutput = document.getElementById('noteOutput');
+        const status = document.getElementById('status');
+        let model, audioContext, oscillator;
+
+        // Notas musicales
+        const notes = [
+            { name: 'Do (C4)', freq: 261.63 },
+            { name: 'Re (D4)', freq: 293.66 },
+            { name: 'Mi (E4)', freq: 329.63 },
+            { name: 'Fa (F4)', freq: 349.23 },
+            { name: 'Sol (G4)', freq: 392.00 },
+            { name: 'La (A4)', freq: 440.00 },
+            { name: 'Si (B4)', freq: 493.88 },
+            { name: 'Do (C5)', freq: 523.25 }
+        ];
+
+        // Inicializar el contexto de audio
+        function initAudio() {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            oscillator = audioContext.createOscillator();
+            oscillator.connect(audioContext.destination);
+            oscillator.start();
+            oscillator.frequency.setValueAtTime(0, audioContext.currentTime);
+        }
+
+        // Reproducir nota
+        function playNote(noteIndex) {
+            const note = notes[noteIndex];
+            oscillator.frequency.setValueAtTime(note.freq, audioContext.currentTime);
+            noteOutput.textContent = `Nota: ${note.name}`;
+        }
+
+        // Detener nota
+        function stopNote() {
+            oscillator.frequency.setValueAtTime(0, audioContext.currentTime);
+            noteOutput.textContent = 'Nota: Ninguna';
+        }
+
+        // Inicializar la cámara
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => resolve(video);
+                });
+            } catch (error) {
+                status.textContent = 'Error al acceder a la cámara: ' + error.message;
+                throw error;
+            }
+        }
+
+        // Cargar el modelo
+        async function loadModel() {
+            try {
+                model = await handpose.load();
+                status.textContent = 'Modelo cargado. Detectando manos...';
+            } catch (error) {
+                status.textContent = 'Error al cargar el modelo: ' + error.message;
+                throw error;
+            }
+        }
+
+        // Detectar manos y cuadrado
+        async function detectHands() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            const predictions = await model.estimateHands(video);
+            if (predictions.length > 0) {
+                const hand = predictions[0];
+                
+                // Obtener puntos clave para formar un cuadrado
+                const topLeft = hand.annotations.indexFinger[0];
+                const topRight = hand.annotations.pinky[0];
+                const bottomRight = hand.annotations.pinky[3];
+                const bottomLeft = hand.annotations.indexFinger[3];
+
+                // Dibujar el cuadrado
+                ctx.beginPath();
+                ctx.moveTo(...topLeft);
+                ctx.lineTo(...topRight);
+                ctx.lineTo(...bottomRight);
+                ctx.lineTo(...bottomLeft);
+                ctx.closePath();
+                ctx.strokeStyle = 'red';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Calcular el centro del cuadrado
+                const centerY = (topLeft[1] + bottomLeft[1]) / 2;
+
+                // Mapear la posición vertical a un índice de nota
+                const noteIndex = Math.floor(((canvas.height - centerY) / canvas.height) * notes.length);
+                const clampedNoteIndex = Math.max(0, Math.min(noteIndex, notes.length - 1));
+
+                playNote(clampedNoteIndex);
+                output.textContent = 'Cuadrado detectado';
+            } else {
+                output.textContent = 'No se detectan manos';
+                stopNote();
+            }
+        }
+
+        // Bucle principal
+        async function runDetection() {
+            await detectHands();
+            requestAnimationFrame(runDetection);
+        }
+
+        // Inicializar la aplicación
+        async function init() {
+            await setupCamera();
+            await loadModel();
+            initAudio();
+            runDetection();
+        }
+
+        init();
+    </script>
+</body>
+</html>
