@@ -3,186 +3,235 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Detector de Manos y Música</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose"></script>
+    <title>Mano Sonora Pentatónica</title>
+    <!-- Tailwind CSS para un diseño moderno y responsivo -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts para una tipografía más elegante -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto:wght@300;400&display=swap" rel="stylesheet">
+    <!-- Bibliotecas de JavaScript: p5.js para el lienzo, ml5.js para machine learning y Tone.js para el audio -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <script src="https://unpkg.com/ml5@0.12.2/dist/ml5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+
     <style>
         body {
-            font-family: Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            margin: 0;
-            background-color: #f0f0f0;
+            font-family: 'Roboto', sans-serif;
         }
-        h1 {
-            color: #333;
+        h1, #status, #note-display {
+            font-family: 'Orbitron', sans-serif;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 0.7);
         }
-        #videoContainer {
-            position: relative;
-            margin-bottom: 20px;
-        }
-        #output, #noteOutput {
-            position: absolute;
-            background-color: rgba(255, 255, 255, 0.7);
-            padding: 5px;
-            border-radius: 5px;
-        }
-        #output {
-            top: 10px;
-            left: 10px;
-        }
-        #noteOutput {
-            top: 10px;
-            right: 10px;
-        }
-        #status {
-            margin-top: 20px;
-            font-weight: bold;
-        }
-        #canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
+        /* Estilo para el efecto de brillo en el lienzo */
+        #canvas-container.detected {
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.8), 0 0 10px rgba(255, 255, 255, 0.5) inset;
         }
     </style>
 </head>
-<body>
-    <h1>Detector de Manos y Música</h1>
-    <div id="videoContainer">
-        <video id="video" width="640" height="480" autoplay></video>
-        <canvas id="canvas" width="640" height="480"></canvas>
-        <div id="output"></div>
-        <div id="noteOutput"></div>
-    </div>
-    <div id="status">Cargando modelo...</div>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-between min-h-screen p-4 sm:p-6">
+
+    <!-- Encabezado -->
+    <header class="text-center w-full">
+        <h1 class="text-4xl md:text-5xl font-bold text-cyan-300">Mano Sonora Pentatónica</h1>
+        <p class="text-lg md:text-xl text-gray-400 mt-2">Creado por Manuel Puebla Vega</p>
+    </header>
+
+    <!-- Contenido Principal: Video y Canvas -->
+    <main class="flex flex-col items-center justify-center w-full my-6">
+        <div id="canvas-container" class="relative w-full max-w-2xl mx-auto rounded-xl overflow-hidden shadow-2xl border-4 border-gray-700 transition-all duration-300">
+            <!-- El lienzo de p5.js se insertará aquí -->
+            <div id="status" class="absolute top-4 left-4 bg-black bg-opacity-60 backdrop-blur-sm py-2 px-4 rounded-lg text-cyan-300">
+                Cargando modelo...
+            </div>
+            <div id="note-display" class="absolute bottom-4 right-4 bg-black bg-opacity-60 backdrop-blur-sm py-2 px-4 rounded-lg text-cyan-300">
+                Nota: -
+            </div>
+        </div>
+        <p id="instruction" class="mt-4 text-gray-400 text-center">Apunta con tu dedo índice a una nota para que suene.</p>
+    </main>
+
+    <!-- Pie de página -->
+    <footer class="w-full text-center text-gray-500 text-sm">
+        <p>Todos los derechos reservados. Brotes Musicales ® 2025</p>
+    </footer>
 
     <script>
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        const output = document.getElementById('output');
-        const noteOutput = document.getElementById('noteOutput');
-        const status = document.getElementById('status');
-        let model, audioContext, oscillator;
+        // Variables globales
+        let handpose;
+        let video;
+        let hands = [];
+        let synth;
+        let soundOn = false; // Estado para controlar el sonido
+        let currentNote = null; // Almacena la nota que está sonando actualmente
+        
+        // Elementos del DOM
+        const statusEl = document.getElementById('status');
+        const noteEl = document.getElementById('note-display');
+        const canvasContainer = document.getElementById('canvas-container');
 
-        // Notas musicales
+        // Escala Pentatónica Mayor de C en 3 octavas
         const notes = [
-            { name: 'Do (C4)', freq: 261.63 },
-            { name: 'Re (D4)', freq: 293.66 },
-            { name: 'Mi (E4)', freq: 329.63 },
-            { name: 'Fa (F4)', freq: 349.23 },
-            { name: 'Sol (G4)', freq: 392.00 },
-            { name: 'La (A4)', freq: 440.00 },
-            { name: 'Si (B4)', freq: 493.88 },
-            { name: 'Do (C5)', freq: 523.25 }
+            "C4", "D4", "E4", "G4", "A4",
+            "C5", "D5", "E5", "G5", "A5",
+            "C6", "D6", "E6", "G6", "A6"
         ];
 
-        // Inicializar el contexto de audio
-        function initAudio() {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            oscillator = audioContext.createOscillator();
-            oscillator.connect(audioContext.destination);
-            oscillator.start();
-            oscillator.frequency.setValueAtTime(0, audioContext.currentTime);
+        function setup() {
+            const canvas = createCanvas(640, 480);
+            canvas.parent('canvas-container');
+
+            video = createCapture(VIDEO);
+            video.size(width, height);
+            video.hide(); 
+
+            synth = new Tone.FMSynth().toDestination();
+            
+            handpose = ml5.handpose(video, modelReady);
+
+            handpose.on('hand', results => {
+                hands = results;
+            });
         }
 
-        // Reproducir nota
-        function playNote(noteIndex) {
-            const note = notes[noteIndex];
-            oscillator.frequency.setValueAtTime(note.freq, audioContext.currentTime);
-            noteOutput.textContent = `Nota: ${note.name}`;
-        }
+        function draw() {
+            // ---- INICIO DE LA CORRECCIÓN ----
+            // 1. Voltea el lienzo para crear el efecto espejo.
+            translate(width, 0);
+            scale(-1, 1);
+            
+            // 2. Dibuja la imagen del video (que ahora se verá en espejo).
+            image(video, 0, 0, width, height);
 
-        // Detener nota
-        function stopNote() {
-            oscillator.frequency.setValueAtTime(0, audioContext.currentTime);
-            noteOutput.textContent = 'Nota: Ninguna';
-        }
+            // 3. Dibuja todo lo demás (guías y mano) sobre el lienzo ya volteado.
+            // De esta forma, las coordenadas coincidirán con la imagen.
+            drawNoteGuides();
 
-        // Inicializar la cámara
-        async function setupCamera() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                video.srcObject = stream;
-                return new Promise((resolve) => {
-                    video.onloadedmetadata = () => resolve(video);
-                });
-            } catch (error) {
-                status.textContent = 'Error al acceder a la cámara: ' + error.message;
-                throw error;
-            }
-        }
+            if (hands.length > 0) {
+                const hand = hands[0];
+                drawHand(hand);
+                const isPointing = checkPointingFinger(hand); 
 
-        // Cargar el modelo
-        async function loadModel() {
-            try {
-                model = await handpose.load();
-                status.textContent = 'Modelo cargado. Detectando manos...';
-            } catch (error) {
-                status.textContent = 'Error al cargar el modelo: ' + error.message;
-                throw error;
-            }
-        }
+                if (isPointing) {
+                    const indexTip = hand.landmarks[8];
+                    const noteIndex = floor(map(indexTip[1], height, 0, 0, notes.length - 1));
+                    const newNote = notes[constrain(noteIndex, 0, notes.length - 1)];
 
-        // Detectar manos y cuadrado
-        async function detectHands() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-            const predictions = await model.estimateHands(video);
-            if (predictions.length > 0) {
-                const hand = predictions[0];
-                
-                // Obtener puntos clave para formar un cuadrado
-                const topLeft = hand.annotations.indexFinger[0];
-                const topRight = hand.annotations.pinky[0];
-                const bottomRight = hand.annotations.pinky[3];
-                const bottomLeft = hand.annotations.indexFinger[3];
-
-                // Dibujar el cuadrado
-                ctx.beginPath();
-                ctx.moveTo(...topLeft);
-                ctx.lineTo(...topRight);
-                ctx.lineTo(...bottomRight);
-                ctx.lineTo(...bottomLeft);
-                ctx.closePath();
-                ctx.strokeStyle = 'red';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-
-                // Calcular el centro del cuadrado
-                const centerY = (topLeft[1] + bottomLeft[1]) / 2;
-
-                // Mapear la posición vertical a un índice de nota
-                const noteIndex = Math.floor(((canvas.height - centerY) / canvas.height) * notes.length);
-                const clampedNoteIndex = Math.max(0, Math.min(noteIndex, notes.length - 1));
-
-                playNote(clampedNoteIndex);
-                output.textContent = 'Cuadrado detectado';
+                    if (!soundOn) {
+                        startSound(newNote);
+                    } 
+                    else if (newNote !== currentNote) {
+                        playNewNote(newNote);
+                    }
+                } else {
+                    if (soundOn) {
+                        stopSound();
+                    }
+                }
             } else {
-                output.textContent = 'No se detectan manos';
-                stopNote();
+                if (soundOn) {
+                    stopSound();
+                }
+            }
+            // ---- FIN DE LA CORRECCIÓN ----
+        }
+        
+        function modelReady() {
+            statusEl.textContent = '¡Listo! Muestra tu mano';
+            Tone.start(); 
+        }
+
+        function drawNoteGuides() {
+            const noteHeight = height / notes.length;
+            for (let i = 0; i < notes.length; i++) {
+                const y = height - (i * noteHeight);
+                
+                stroke(255, 255, 255, 50);
+                strokeWeight(1);
+                line(0, y, width, y);
+                
+                noStroke();
+                fill(255, 255, 255, 150);
+                textSize(14);
+                textAlign(RIGHT, CENTER); // Cambiado a RIGHT para que aparezca a la izquierda en el lienzo volteado
+                text(notes[i], width - 15, y - noteHeight / 2); // Ajustada la posición x
             }
         }
 
-        // Bucle principal
-        async function runDetection() {
-            await detectHands();
-            requestAnimationFrame(runDetection);
+        function drawHand(hand) {
+            stroke(0, 255, 255, 150);
+            strokeWeight(4);
+            const annotations = hand.annotations;
+            for (const finger in annotations) {
+                if (finger !== 'palmBase') {
+                    for (let i = 0; i < annotations[finger].length - 1; i++) {
+                        line(annotations[finger][i][0], annotations[finger][i][1], annotations[finger][i + 1][0], annotations[finger][i + 1][1]);
+                    }
+                }
+            }
+
+            noStroke();
+            for (let i = 0; i < hand.landmarks.length; i++) {
+                const [x, y] = hand.landmarks[i];
+                if (i === 8 && soundOn) {
+                    fill(255, 255, 0);
+                    ellipse(x, y, 20, 20);
+                } else {
+                    fill(0, 255, 255);
+                    ellipse(x, y, 10, 10);
+                }
+            }
+        }
+        
+        function checkPointingFinger(hand) {
+            const wrist = hand.landmarks[0];
+            const landmarks = {
+                index: { tip: 8, pip: 6 },
+                middle: { tip: 12, pip: 10 },
+                ring: { tip: 16, pip: 14 },
+                pinky: { tip: 20, pip: 18 }
+            };
+
+            const indexTipPos = hand.landmarks[landmarks.index.tip];
+            const indexPipPos = hand.landmarks[landmarks.index.pip];
+            const isIndexExtended = dist(indexTipPos[0], indexTipPos[1], wrist[0], wrist[1]) > dist(indexPipPos[0], indexPipPos[1], wrist[0], wrist[1]);
+
+            let otherFingersCurled = true;
+            for (const finger of ['middle', 'ring', 'pinky']) {
+                const tipPos = hand.landmarks[landmarks[finger].tip];
+                const pipPos = hand.landmarks[landmarks[finger].pip];
+                if (dist(tipPos[0], tipPos[1], wrist[0], wrist[1]) > dist(pipPos[0], pipPos[1], wrist[0], wrist[1])) {
+                    otherFingersCurled = false;
+                    break;
+                }
+            }
+
+            return isIndexExtended && otherFingersCurled;
+        }
+        
+        function startSound(note) {
+            soundOn = true;
+            currentNote = note;
+            synth.triggerAttack(currentNote, Tone.now());
+            statusEl.textContent = '¡Apuntando!';
+            noteEl.textContent = `Nota: ${currentNote}`;
+            canvasContainer.classList.add('detected');
         }
 
-        // Inicializar la aplicación
-        async function init() {
-            await setupCamera();
-            await loadModel();
-            initAudio();
-            runDetection();
+        function playNewNote(note) {
+            currentNote = note;
+            synth.triggerAttack(note, Tone.now());
+            noteEl.textContent = `Nota: ${currentNote}`;
         }
-
-        init();
+        
+        function stopSound() {
+            soundOn = false;
+            currentNote = null;
+            synth.triggerRelease(Tone.now());
+            statusEl.textContent = '¡Listo! Muestra tu mano';
+            canvasContainer.classList.remove('detected');
+            noteEl.textContent = 'Nota: -';
+        }
     </script>
 </body>
 </html>
